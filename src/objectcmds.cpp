@@ -335,6 +335,7 @@ namespace
 		auto type = left->as_string();
 		auto arr = right->data<arraydata>();
 		double skill = 0.5;
+		std::string init;
 		std::string rank = "PRIVATE";
 
 		if (arr->size() < 2)
@@ -372,7 +373,7 @@ namespace
 			}
 			else
 			{
-				std::string init = arr->at(2)->as_string();
+				init = arr->at(2)->as_string();
 			}
 		}
 		//skill
