@@ -711,6 +711,7 @@ std::string sqf::parser::preprocessor::impl_default::instance::parse_ppinstructi
                 return "";
             }
             const auto& physical = include_path_info->physical;
+            const auto& virtualPath = include_path_info->virtual_;
             auto res = std::find_if(m_file_scopes.begin(), m_file_scopes.end(),
                 [physical](file_scope& parent) -> bool { return parent.path.physical == physical; });
             if (res != m_file_scopes.end())
@@ -732,13 +733,13 @@ std::string sqf::parser::preprocessor::impl_default::instance::parse_ppinstructi
             auto lineInfo = std::to_string(fileinfo.line - 1);
             auto parsedFile = parse_file(runtime, otherfinfo);
             output.reserve(
-                ::sqf::runtime::util::strlen("#line 1 \"") + physical.size() + ::sqf::runtime::util::strlen("\"\n") +
+                ::sqf::runtime::util::strlen("#line 1 \"") + virtualPath.size() + ::sqf::runtime::util::strlen("\"\n") +
                 parsedFile.size() + ::sqf::runtime::util::strlen("\n") +
-                ::sqf::runtime::util::strlen("#line ") + lineInfo.size() + ::sqf::runtime::util::strlen(" \"") + fileinfo.pathinf.physical.size() + ::sqf::runtime::util::strlen("\"\n")
+                ::sqf::runtime::util::strlen("#line ") + lineInfo.size() + ::sqf::runtime::util::strlen(" \"") + fileinfo.pathinf.virtual_.size() + ::sqf::runtime::util::strlen("\"\n")
             );
-            output.append("#line 1 \""); output.append(physical); output.append("\"\n");
+            output.append("#line 1 \""); output.append(virtualPath); output.append("\"\n");
             output.append(parsedFile); output.append("\n");
-            output.append("#line "); output.append(lineInfo); output.append(" \""); output.append(fileinfo.pathinf.physical); output.append("\"\n");
+            output.append("#line "); output.append(lineInfo); output.append(" \""); output.append(fileinfo.pathinf.virtual_); output.append("\"\n");
             return output;
         }
         catch (const std::runtime_error& ex)
@@ -926,7 +927,7 @@ std::string sqf::parser::preprocessor::impl_default::instance::parse_file(::sqf:
     std::stringstream sstream;
     std::stringstream wordstream;
     std::unordered_map<std::string, std::string> empty_parammap;
-    sstream << "#line 0 \"" << fileinfo.pathinf.physical << "\"\n";
+    sstream << "#line 0 \"" << fileinfo.pathinf.virtual_ << "\"\n";
     bool was_new_line = true;
     bool is_in_string = false;
     while ((c = fileinfo.next()) != '\0')
@@ -1067,7 +1068,7 @@ std::string file_macro_callback(
     const std::vector<std::string>& params,
     ::sqf::runtime::runtime& runtime)
 {
-    return dinf.path.physical;
+    return dinf.path.virtual_;
 }
 std::string eval_macro_callback(
     const ::sqf::runtime::parser::macro& m,

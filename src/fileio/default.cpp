@@ -185,7 +185,12 @@ std::optional<sqf::runtime::fileio::pathinfo> sqf::fileio::impl_default::get_inf
             if (rootEnd == phys.end() && !std::equal(phys.begin(), phys.end(), toFindPath.begin(), toFindPath.end()))
             {
                 log(logmessage::fileio::ResolvePhysicalMatched(current.physical, current.virtual_, phys.string()));
-                toFindPath = it->virtual_full + "/" + toFindPath.string().substr(phys.string().size() + 1);
+
+                auto t1 = toFindPath.string();
+                auto t2 = t1.substr(phys.string().size() + 1);
+
+
+                toFindPath = it->virtual_full + "/" + t2;
                 toFindPath = toFindPath.lexically_normal();
                 auto toFindString = toFindPath.string();
                 std::replace(toFindString.begin(), toFindString.end(), '\\', '/');
