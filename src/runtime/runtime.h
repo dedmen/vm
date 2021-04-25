@@ -325,7 +325,7 @@ namespace sqf::runtime
             CanLog(logger),
             m_is_halt_requested(false),
             m_is_exit_requested(false),
-            m_state(state::halted),
+            m_state(state::empty),
             m_exit_code(0),
             m_run_atomic(false),
             m_breakpoints(),
@@ -346,7 +346,7 @@ namespace sqf::runtime
 
 
         sqf::runtime::runtime::result execute(sqf::runtime::runtime::action action);
-        const sqf::runtime::runtime::runtime_conf configuration() const { return m_configuration; }
+        sqf::runtime::runtime::runtime_conf& configuration() { return m_configuration; }
         std::chrono::system_clock::time_point runtime_timestamp() { return m_runtime_timestamp; }
         void runtime_timestamp_reset() { m_runtime_timestamp = std::chrono::system_clock::now(); }
 

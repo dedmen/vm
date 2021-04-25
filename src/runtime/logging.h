@@ -236,6 +236,19 @@ namespace logmessage {
             [[nodiscard]] std::string formatMessage() const override;
         };
 
+        class UnknownPragma : public PreprocBase
+        {
+            static const loglevel level = loglevel::warning;
+            static const size_t errorCode = 10013;
+            std::string instruction;
+        public:
+            UnknownPragma(LogLocationInfo loc, std::string instruction) :
+                PreprocBase(level, errorCode, std::move(loc)), instruction(instruction)
+            {
+            }
+            [[nodiscard]] std::string formatMessage() const override;
+        };
+
     }
     namespace assembly
     {
@@ -532,8 +545,8 @@ namespace logmessage {
             std::string_view msg;
         public:
             ParseError(LogLocationInfo loc, std::string_view msg) :
-                msg(msg),
-                SqfBase(level, errorCode, std::move(loc)) { }
+                SqfBase(level, errorCode, std::move(loc)),
+                msg(msg) { }
             [[nodiscard]] std::string formatMessage() const override;
         };
     }
@@ -637,6 +650,34 @@ namespace logmessage {
         public:
             EndOfFileNotReached(LogLocationInfo loc) :
                 ConfigBase(level, errorCode, std::move(loc)) { }
+            [[nodiscard]] std::string formatMessage() const override;
+        };
+        class ParseError : public ConfigBase
+        {
+            static const loglevel level = loglevel::error;
+            static const size_t errorCode = 40013;
+            std::string_view msg;
+        public:
+            ParseError(LogLocationInfo loc, std::string_view msg) :
+                ConfigBase(level, errorCode, std::move(loc)),
+                msg(msg)
+            {
+            }
+            [[nodiscard]] std::string formatMessage() const override;
+        };
+        class InheritedParentNotFound : public ConfigBase
+        {
+            static const loglevel level = loglevel::warning;
+            static const size_t errorCode = 40014;
+            std::string_view node_name;
+            std::string_view parent_name;
+        public:
+            InheritedParentNotFound(LogLocationInfo loc, std::string_view node_name, std::string_view parent_name) :
+                ConfigBase(level, errorCode, std::move(loc)),
+                node_name(node_name),
+                parent_name(parent_name)
+            {
+            }
             [[nodiscard]] std::string formatMessage() const override;
         };
     }
@@ -1781,6 +1822,17 @@ namespace logmessage {
             {}
             [[nodiscard]] std::string formatMessage() const override;
         };
+        class InvalidAssemblyInstruction : public RuntimeBase {
+            static const loglevel level = loglevel::error;
+            static const size_t errorCode = 60098;
+            std::string m_assembly;
+        public:
+            InvalidAssemblyInstruction(LogLocationInfo loc, std::string assembly) :
+                RuntimeBase(level, errorCode, std::move(loc)),
+                m_assembly(assembly)
+            {}
+            [[nodiscard]] std::string formatMessage() const override;
+        };
     }
     namespace fileio
     {
@@ -1973,6 +2025,74 @@ namespace logmessage {
                 m_physical(phys),
                 m_virtual(virt),
                 m_matched(matched) {}
+            [[nodiscard]] std::string formatMessage() const override;
+        };
+        class PBOAlreadyAdded : public FileIoBase {
+            static const loglevel level = loglevel::warning;
+            static const size_t errorCode = 70015;
+            std::string_view m_path;
+        public:
+            PBOAlreadyAdded(std::string_view path) :
+                FileIoBase(level, errorCode, {}),
+                m_path(path) {}
+            [[nodiscard]] std::string formatMessage() const override;
+        };
+        class FailedToParsePBO : public FileIoBase {
+            static const loglevel level = loglevel::error;
+            static const size_t errorCode = 70016;
+            std::string_view m_path;
+        public:
+            FailedToParsePBO(std::string_view path) :
+                FileIoBase(level, errorCode, {}),
+                m_path(path) {}
+            [[nodiscard]] std::string formatMessage() const override;
+        };
+        class PBOHasNoPrefixAttribute : public FileIoBase {
+            static const loglevel level = loglevel::error;
+            static const size_t errorCode = 70017;
+            std::string_view m_path;
+        public:
+            PBOHasNoPrefixAttribute(std::string_view path) :
+                FileIoBase(level, errorCode, {}),
+                m_path(path) {}
+            [[nodiscard]] std::string formatMessage() const override;
+        };
+        class PBOFileAlreadyRegistered : public FileIoBase {
+            static const loglevel level = loglevel::warning;
+            static const size_t errorCode = 70018;
+            std::string_view m_path;
+            std::string_view m_file;
+        public:
+            PBOFileAlreadyRegistered(std::string_view path, std::string_view file) :
+                FileIoBase(level, errorCode, {}),
+                m_path(path),
+                m_file(path)
+            {}
+            [[nodiscard]] std::string formatMessage() const override;
+        };
+        class PBOFileNotFound : public FileIoBase {
+            static const loglevel level = loglevel::fatal;
+            static const size_t errorCode = 70019;
+            std::string_view m_path;
+        public:
+            PBOFileNotFound(std::string_view path) :
+                FileIoBase(level, errorCode, {}),
+                m_path(path)
+            {}
+            [[nodiscard]] std::string formatMessage() const override;
+        };
+        class PBOFailedToReadFile : public FileIoBase {
+            static const loglevel level = loglevel::fatal;
+            static const size_t errorCode = 70020;
+            std::string_view m_path;
+            std::string_view m_file;
+        public:
+            PBOFailedToReadFile(std::string_view path, std::string_view file) :
+                FileIoBase(level, errorCode, {}),
+                m_path(path),
+                m_file(path)
+            {
+            }
             [[nodiscard]] std::string formatMessage() const override;
         };
     }

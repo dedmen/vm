@@ -243,6 +243,22 @@ namespace logmessage::preprocessor {
         output.append(message);
         return output;
     }
+    std::string UnknownPragma::formatMessage() const
+    {
+        auto output = m_location.format();
+
+        output.reserve(
+            output.length()
+            + "Unknown pragma instruction '"sv.length()
+            + instruction.length()
+            + "'."sv.length()
+        );
+
+        output.append("Unknown pragma instruction '"sv);
+        output.append(instruction);
+        output.append("'."sv);
+        return output;
+    }
 }
 
 namespace logmessage::assembly {
@@ -913,6 +929,43 @@ namespace logmessage::config
         );
 
         output.append(message);
+        return output;
+    }
+    std::string ParseError::formatMessage() const
+    {
+        auto output = m_location.format();
+
+        output.reserve(
+            output.length()
+            + "Parse Error: "sv.length()
+            + msg.length()
+        );
+
+        output.append("Parse Error: "sv);
+        output.append(msg);
+        return output;
+    }
+    std::string InheritedParentNotFound::formatMessage() const
+    {
+        auto output = m_location.format();
+        const auto message_a = "The provided inherited config node was not located on current or upper levels (class "sv;
+        const auto message_b = " : "sv;
+        const auto message_c = ")."sv;
+
+        output.reserve(
+            output.length()
+            + message_a.length()
+            + node_name.length()
+            + message_b.length()
+            + parent_name.length()
+            + message_c.length()
+        );
+
+        output.append(message_a);
+        output.append(node_name);
+        output.append(message_b);
+        output.append(parent_name);
+        output.append(message_c);
         return output;
     }
 }
@@ -2762,6 +2815,22 @@ namespace logmessage::runtime
         output.append(m_message);
         return output;
     }
+    std::string InvalidAssemblyInstruction::formatMessage() const
+    {
+        auto output = m_location.format();
+
+        output.reserve(
+            output.length()
+            + "Invalid assembly instruction { "sv.length()
+            + m_assembly.length()
+            + " }"sv.length()
+        );
+
+        output.append("Invalid assembly instruction { "sv);
+        output.append(m_assembly);
+        output.append(" }"sv);
+        return output;
+    }
 }
 
 std::string logmessage::fileio::ResolveVirtualRequested::formatMessage() const
@@ -3127,5 +3196,123 @@ std::string logmessage::fileio::ResolvePhysicalFailedToLookup::formatMessage() c
     output.append(messageC);
     output.append(m_physical);
     output.append(messageD);
+    return output;
+}
+
+std::string logmessage::fileio::PBOFileAlreadyRegistered::formatMessage() const
+{
+    const auto messageA = "File `"sv;
+    const auto messageB = "` of PBO `"sv;
+    const auto messageC = "` already is registred."sv;
+
+    std::string output;
+    output.reserve(
+        messageA.length() +
+        m_file.length() +
+        messageB.length() +
+        m_path.length() +
+        messageC.length()
+    );
+
+    output.append(messageA);
+    output.append(m_file);
+    output.append(messageB);
+    output.append(m_path);
+    output.append(messageC);
+    return output;
+}
+
+std::string logmessage::fileio::PBOHasNoPrefixAttribute::formatMessage() const
+{
+    const auto messageA = "PBO `"sv;
+    const auto messageB = "` has no `prefix` attribute."sv;
+
+    std::string output;
+    output.reserve(
+        messageA.length() +
+        m_path.length() +
+        messageB.length()
+    );
+
+    output.append(messageA);
+    output.append(m_path);
+    output.append(messageB);
+    return output;
+}
+
+std::string logmessage::fileio::FailedToParsePBO::formatMessage() const
+{
+    const auto messageA = "Failed to parse PBO `"sv;
+    const auto messageB = "`."sv;
+
+    std::string output;
+    output.reserve(
+        messageA.length() +
+        m_path.length() +
+        messageB.length()
+    );
+
+    output.append(messageA);
+    output.append(m_path);
+    output.append(messageB);
+    return output;
+}
+
+std::string logmessage::fileio::PBOAlreadyAdded::formatMessage() const
+{
+    const auto messageA = "The PBO `"sv;
+    const auto messageB = "` was added already."sv;
+
+    std::string output;
+    output.reserve(
+        messageA.length() +
+        m_path.length() +
+        messageB.length()
+    );
+
+    output.append(messageA);
+    output.append(m_path);
+    output.append(messageB);
+    return output;
+}
+
+std::string logmessage::fileio::PBOFileNotFound::formatMessage() const
+{
+    const auto messageA = "PBO `"sv;
+    const auto messageB = "` is supposed to be loaded but is not."sv;
+
+    std::string output;
+    output.reserve(
+        messageA.length() +
+        m_path.length() +
+        messageB.length()
+    );
+
+    output.append(messageA);
+    output.append(m_path);
+    output.append(messageB);
+    return output;
+}
+
+std::string logmessage::fileio::PBOFailedToReadFile::formatMessage() const
+{
+    const auto messageA = "Failed to read `"sv;
+    const auto messageB = "` from PBO `"sv;
+    const auto messageC = "`."sv;
+
+    std::string output;
+    output.reserve(
+        messageA.length() +
+        m_file.length() +
+        messageB.length() +
+        m_path.length() +
+        messageC.length()
+    );
+
+    output.append(messageA);
+    output.append(m_file);
+    output.append(messageB);
+    output.append(m_path);
+    output.append(messageC);
     return output;
 }

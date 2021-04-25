@@ -14,6 +14,13 @@
 
 %code requires
 {
+    #ifdef __GNUG__
+        #pragma GCC diagnostic push
+        #pragma GCC diagnostic ignored "-Wall"
+    #endif
+    #ifdef _MSC_VER
+        #pragma warning(push, 0)
+    #endif
      namespace sqf::sqc
      {
           class parser;
@@ -76,6 +83,7 @@
                OP_MINUS,
                OP_MULTIPLY,
                OP_DIVIDE,
+               OP_CONFIGNAV,
                OP_REMAINDER,
                OP_NOT,
                OP_CALL,
@@ -92,6 +100,14 @@
                OP_ACCESS_SET_MINUS,
                OP_ACCESS_SET_STAR,
                OP_ACCESS_SET_SLASH,
+               OP_RANGE_INDEX,
+               OP_RANGE_INDEX_LENGTH,
+               OP_RANGE_RINDEX_LENGTH,
+               OP_RANGE_INDEX_RLENGTH,
+               OP_RANGE_LENGTH,
+               OP_RANGE_RINDEX,
+               OP_RANGE_RINDEX_RLENGTH,
+               OP_RANGE_RLENGTH,
                SVAL_FORMAT_STRING,
                VAL_STRING,
                VAL_ARRAY,
@@ -191,8 +207,10 @@
 %token SQUAREC                   "]"
 %token SEMICOLON                 ";"
 %token COMMA                     ","
+%token DOTDOT                    ".."
 %token DOT                       "."
 %token QUESTIONMARK              "?"
+%token CIRCUMFLEX                "^"
 
 %token <tokenizer::token> BE                        "be"
 %token <tokenizer::token> EQUAL                     "="
@@ -213,6 +231,7 @@
 %token <tokenizer::token> LTEQUAL                   "<="
 %token <tokenizer::token> LT                        "<"
 %token <tokenizer::token> GTEQUAL                   ">="
+%token <tokenizer::token> GTGT                      ">>"
 %token <tokenizer::token> GT                        ">"
 %token <tokenizer::token> EQUALEQUALEQUAL           "==="
 %token <tokenizer::token> EQUALEQUAL                "=="
@@ -362,6 +381,7 @@ exp05: exp06                          { $$ = $1; }
      | exp05 "<=" exp06               { $$ = sqf::sqc::bison::astnode{ astkind::OP_LESSTHANEQUAL, $2 }; $$.append($1); $$.append($3); }
      | exp05 ">"  exp06               { $$ = sqf::sqc::bison::astnode{ astkind::OP_GREATERTHAN, $2 }; $$.append($1); $$.append($3); }
      | exp05 ">=" exp06               { $$ = sqf::sqc::bison::astnode{ astkind::OP_GREATERTHANEQUAL, $2 }; $$.append($1); $$.append($3); }
+     | exp05 ">>" exp06               { $$ = sqf::sqc::bison::astnode{ astkind::OP_CONFIGNAV, $2 }; $$.append($1); $$.append($3); }
      ;
 exp06: exp07                          { $$ = $1; }
      | exp06 "+" exp07                { $$ = sqf::sqc::bison::astnode{ astkind::OP_PLUS, $2 }; $$.append($1); $$.append($3); }
@@ -380,7 +400,15 @@ exp09: expp                           { $$ = $1; }
      | objget                         { $$ = $1; }
      | call                           { $$ = $1; }
      ;
-arrget: exp09 "[" exp01 "]"           { $$ = sqf::sqc::bison::astnode{ astkind::OP_ARRAY_GET, tokenizer.create_token() }; $$.append($1); $$.append($3); }
+arrget: exp09 "[" exp01 ".." "]"                  { $$ = sqf::sqc::bison::astnode{ astkind::OP_RANGE_INDEX, tokenizer.create_token() }; $$.append($1); $$.append($3); }
+      | exp09 "[" exp01 ".." exp01 "]"            { $$ = sqf::sqc::bison::astnode{ astkind::OP_RANGE_INDEX_LENGTH, tokenizer.create_token() }; $$.append($1); $$.append($3); $$.append($5); }
+      | exp09 "[" "^" exp01 ".." exp01 "]"        { $$ = sqf::sqc::bison::astnode{ astkind::OP_RANGE_RINDEX_LENGTH, tokenizer.create_token() }; $$.append($1); $$.append($4); $$.append($6); }
+      | exp09 "[" exp01 ".." "^" exp01 "]"        { $$ = sqf::sqc::bison::astnode{ astkind::OP_RANGE_INDEX_RLENGTH, tokenizer.create_token() }; $$.append($1); $$.append($3); $$.append($6); }
+      | exp09 "[" ".." exp01 "]"                  { $$ = sqf::sqc::bison::astnode{ astkind::OP_RANGE_LENGTH, tokenizer.create_token() }; $$.append($1); $$.append($4); }
+      | exp09 "[" "^" exp01 ".." "]"              { $$ = sqf::sqc::bison::astnode{ astkind::OP_RANGE_RINDEX, tokenizer.create_token() }; $$.append($1); $$.append($4); }
+      | exp09 "[" "^" exp01 ".." "^" exp01 "]"    { $$ = sqf::sqc::bison::astnode{ astkind::OP_RANGE_RINDEX_RLENGTH, tokenizer.create_token() }; $$.append($1); $$.append($4); $$.append($7); }
+      | exp09 "[" ".." "^" exp01 "]"              { $$ = sqf::sqc::bison::astnode{ astkind::OP_RANGE_RLENGTH, tokenizer.create_token() }; $$.append($1); $$.append($5); }
+      | exp09 "[" exp01 "]"                       { $$ = sqf::sqc::bison::astnode{ astkind::OP_ARRAY_GET, tokenizer.create_token() }; $$.append($1); $$.append($3); }
       ;
 call: exp09 "." IDENT "(" explist ")" { $$ = sqf::sqc::bison::astnode{ astkind::OP_CALL, $3 }; $$.append($1); $$.append($3); $$.append($5); }
     | exp09 "." IDENT "(" ")"         { $$ = sqf::sqc::bison::astnode{ astkind::OP_CALL, $3 }; $$.append($1); $$.append($3); }
@@ -398,10 +426,10 @@ expp: IDENT "(" ")"                   { $$ = sqf::sqc::bison::astnode{ astkind::
     | value                           { $$ = $1; }
     ;
 obj: "{" "}"                          { $$ = sqf::sqc::bison::astnode{ astkind::OBJECT, tokenizer.create_token() }; }
-   | "{" obj_items "}"                { $$ = sqf::sqc::bison::astnode{ astkind::OBJECT, tokenizer.create_token() }; $$.append($2); }
-   | "{" obj_items "," "}"            { $$ = sqf::sqc::bison::astnode{ astkind::OBJECT, tokenizer.create_token() }; $$.append($2); }
+   | "{" obj_items "}"                { $$ = sqf::sqc::bison::astnode{ astkind::OBJECT, tokenizer.create_token() }; $$.append_children($2); }
+   | "{" obj_items "," "}"            { $$ = sqf::sqc::bison::astnode{ astkind::OBJECT, tokenizer.create_token() }; $$.append_children($2); }
    ;
-obj_item: IDENT ":" value             { $$ = sqf::sqc::bison::astnode{ astkind::OBJECT_ITEM, $1 }; $$.append($3); }
+obj_item: IDENT ":" exp01             { $$ = sqf::sqc::bison::astnode{ astkind::OBJECT_ITEM, $1 }; $$.append($3); }
         ;
 obj_items: obj_item                   { $$ = sqf::sqc::bison::astnode{ astkind::OBJECT_ITEMS, tokenizer.create_token() }; $$.append($1); }
          | obj_items "," obj_item     { $$ = $1; $$.append($3); }
@@ -437,6 +465,12 @@ format_string_match : FORMAT_STRING_CONTINUE format_string_match           { $$ 
                     | exp01 FORMAT_STRING_FINAL                            { $$ = sqf::sqc::bison::astnode{}; $$.append($1); $$.append($2); }
                     ;
 %%
+#ifdef __GNUG__
+    #pragma GCC diagnostic pop
+#endif
+#ifdef _MSC_VER
+    #pragma warning(pop)
+#endif
 
 #include "sqc_parser.h"
 namespace sqf::sqc::bison
@@ -500,6 +534,7 @@ namespace sqf::sqc::bison
          case tokenizer::etoken::s_equalequal: return parser::make_EQUALEQUAL(token, loc);
          case tokenizer::etoken::s_equal: return parser::make_EQUAL(token, loc);
          case tokenizer::etoken::s_greaterthenequal: return parser::make_GTEQUAL(token, loc);
+         case tokenizer::etoken::s_greaterthengreaterthen: return parser::make_GTGT(token, loc);
          case tokenizer::etoken::s_greaterthen: return parser::make_GT(token, loc);
          case tokenizer::etoken::s_lessthenequal: return parser::make_LTEQUAL(token, loc);
          case tokenizer::etoken::s_lessthen: return parser::make_LT(token, loc);
@@ -520,9 +555,11 @@ namespace sqf::sqc::bison
          case tokenizer::etoken::s_andand: return parser::make_ANDAND(token, loc);
          case tokenizer::etoken::s_oror: return parser::make_VLINEVLINE(token, loc);
          case tokenizer::etoken::s_questionmark: return parser::make_QUESTIONMARK(loc);
+         case tokenizer::etoken::s_circumflex: return parser::make_CIRCUMFLEX(loc);
          case tokenizer::etoken::s_colon: return parser::make_COLON(token, loc);
          case tokenizer::etoken::s_semicolon: return parser::make_SEMICOLON(loc);
          case tokenizer::etoken::s_comma: return parser::make_COMMA(loc);
+         case tokenizer::etoken::s_dotdot: return parser::make_DOTDOT(loc);
          case tokenizer::etoken::s_dot: return parser::make_DOT(loc);
 
          case tokenizer::etoken::t_string: return parser::make_STRING(token, loc);

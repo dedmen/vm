@@ -83,7 +83,7 @@ namespace sqf::parser::sqf
         {
             size_t i = 0;
             while (value < m_end && is_match<TArgs...>(*value++)) { ++i; }
-            return len == i;
+            return len <= i;
         }
 
         template<char ... TArgs>
@@ -287,7 +287,14 @@ namespace sqf::parser::sqf
                             m_line++;
                             m_column = 0;
                         }
-                        ++iter;
+                        if (iter == m_end)
+                        {
+                            break;
+                        }
+                        else
+                        {
+                            iter++;
+                        }
                     }
                     // set length
                     len = iter - m_current;
@@ -422,9 +429,9 @@ namespace sqf::parser::sqf
             m_start(start),
             m_current(start),
             m_end(end),
+            m_mode(emode::normal),
             m_line(0),
-            m_column(0),
-            m_mode(emode::normal)
+            m_column(0)
         {
             m_strings.push_back(new std::string(path));
         }

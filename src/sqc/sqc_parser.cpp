@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <charconv>
 #include <sstream>
+#include <functional>
 
 using namespace std::string_literals;
 using namespace std::string_view_literals;
@@ -113,9 +114,14 @@ namespace sqf::sqc::util
         std::vector<region_impl> m_regions;
         std::vector<::sqf::sqc::bison::astkind> m_parents;
         std::string_view m_contents;
-        setbuilder(std::string_view contents, std::vector<::sqf::sqc::bison::astkind> m_parents) : m_contents(contents), m_parents(m_parents) {}
+        setbuilder(std::string_view contents, std::vector<::sqf::sqc::bison::astkind> m_parents) : m_parents(m_parents), m_contents(contents) {}
     public:
         setbuilder(std::string_view contents) : m_contents(contents) {}
+
+        std::vector<::sqf::runtime::instruction::sptr>& instructions()
+        {
+            return inner;
+        }
 
         setbuilder create_from() const
         {
@@ -172,23 +178,39 @@ namespace sqf::sqc::util
 
 void sqf::sqc::parser::to_assembly(::sqf::runtime::runtime& runtime, util::setbuilder& set, std::vector<emplace>& locals, const ::sqf::sqc::bison::astnode& node)
 {
+    bool is_top_level = set.has_parent(::sqf::sqc::bison::astkind::STATEMENTS, 2)
+        || set.has_parent(::sqf::sqc::bison::astkind::FUNCTION, 2)
+        || set.has_parent(::sqf::sqc::bison::astkind::FUNCTION_DECLARATION, 2)
+        || set.has_parent(::sqf::sqc::bison::astkind::FINAL_FUNCTION_DECLARATION, 2);
+
+
     util::setbuilder::position icpp_pos;
     float icpp_value;
     auto parent_lock = set.lock_parent(node.kind);
     switch (node.kind)
     {
     case ::sqf::sqc::bison::astkind::RETURN: {
-        if (node.children.empty())
+        if (is_top_level)
         {
-            set.push_back(node.token, std::make_shared<opcodes::push>(key_scopename_function));
-            set.push_back(node.token, std::make_shared<opcodes::call_unary>("breakout"s));
+            if (!node.children.empty())
+            {
+                to_assembly(runtime, set, locals, node.children[0]);
+            }
         }
         else
         {
-            util::setbuilder::region __region(set);
-            to_assembly(runtime, set, locals, node.children[0]);
-            set.push_back(node.token, std::make_shared<opcodes::push>(key_scopename_function));
-            set.push_back(node.token, std::make_shared<opcodes::call_binary>("breakout"s, (short)4));
+            if (node.children.empty())
+            {
+                set.push_back(node.token, std::make_shared<opcodes::push>(key_scopename_function));
+                set.push_back(node.token, std::make_shared<opcodes::call_unary>("breakout"s));
+            }
+            else
+            {
+                util::setbuilder::region __region(set);
+                to_assembly(runtime, set, locals, node.children[0]);
+                set.push_back(node.token, std::make_shared<opcodes::push>(key_scopename_function));
+                set.push_back(node.token, std::make_shared<opcodes::call_binary>("breakout"s, (short)4));
+            }
         }
     } break;
     case ::sqf::sqc::bison::astkind::THROW: {
@@ -256,6 +278,8 @@ void sqf::sqc::parser::to_assembly(::sqf::runtime::runtime& runtime, util::setbu
             // Emit "/"
             set.push_back(node.token, std::make_shared<opcodes::call_binary>("/"s, (short)7));
             break;
+        default:
+            break;
         }
 
         // Assign Value
@@ -322,6 +346,8 @@ void sqf::sqc::parser::to_assembly(::sqf::runtime::runtime& runtime, util::setbu
             case ::sqf::sqc::bison::astkind::OP_ARRAY_SET_SLASH:
                 // Emit "/"
                 set.push_back(node.token, std::make_shared<opcodes::call_binary>("/"s, (short)7));
+                break;
+            default:
                 break;
             }
 
@@ -397,6 +423,8 @@ void sqf::sqc::parser::to_assembly(::sqf::runtime::runtime& runtime, util::setbu
                 // Emit "/"
                 set.push_back(node.token, std::make_shared<opcodes::call_binary>("/"s, (short)7));
                 break;
+            default:
+                break;
             }
 
             // Emit "makeArray" instruction to craft the right-handed argument
@@ -415,6 +443,176 @@ void sqf::sqc::parser::to_assembly(::sqf::runtime::runtime& runtime, util::setbu
 
         // Emit "select" to perform the array index access
         set.push_back(node.token, std::make_shared<opcodes::call_binary>("get"s, (short)4));
+    } break;
+    case ::sqf::sqc::bison::astkind::OP_RANGE_INDEX: {
+        // Push actual array/string onto value stack
+        to_assembly(runtime, set, locals, node.children[0]);
+
+        // Push Index-Expression to stack
+        to_assembly(runtime, set, locals, node.children[1]);
+
+        // Make array out of it
+        set.push_back(node.token, std::make_shared<opcodes::make_array>(1));
+
+        // Emit "select" to perform the array index access
+        set.push_back(node.token, std::make_shared<opcodes::call_binary>("select"s, (short)4));
+    } break;
+    case ::sqf::sqc::bison::astkind::OP_RANGE_INDEX_LENGTH: {
+        // Push actual array/string onto value stack
+        to_assembly(runtime, set, locals, node.children[0]);
+
+        // Push Index-Expression to stack
+        to_assembly(runtime, set, locals, node.children[1]);
+
+        // Push Length-Expression to stack
+        {
+            to_assembly(runtime, set, locals, node.children[2]);
+            to_assembly(runtime, set, locals, node.children[1]);
+            set.push_back(node.token, std::make_shared<opcodes::call_binary>("-"s, (short)6));
+        }
+
+        // Make array out of them
+        set.push_back(node.token, std::make_shared<opcodes::make_array>(2));
+
+        // Emit "select" to perform the array index access
+        set.push_back(node.token, std::make_shared<opcodes::call_binary>("select"s, (short)4));
+    } break;
+    case ::sqf::sqc::bison::astkind::OP_RANGE_LENGTH: {
+        // Push actual array/string onto value stack
+        to_assembly(runtime, set, locals, node.children[0]);
+
+        // Push Index-Expression to stack
+        set.push_back(node.children[1].token, std::make_shared<opcodes::push>(std::make_shared<::sqf::types::d_scalar>(0)));
+
+        // Push Length-Expression to stack
+        to_assembly(runtime, set, locals, node.children[1]);
+
+        // Make array out of them
+        set.push_back(node.token, std::make_shared<opcodes::make_array>(2));
+
+        // Emit "select" to perform the array index access
+        set.push_back(node.token, std::make_shared<opcodes::call_binary>("select"s, (short)4));
+    } break;
+    case ::sqf::sqc::bison::astkind::OP_RANGE_INDEX_RLENGTH: {
+        // Push actual array/string onto value stack
+        to_assembly(runtime, set, locals, node.children[0]);
+
+        // Push Index-Expression to stack
+        to_assembly(runtime, set, locals, node.children[1]);
+
+        // Push Length-Expression to stack
+        {
+            to_assembly(runtime, set, locals, node.children[0]);
+            set.push_back(node.token, std::make_shared<opcodes::call_unary>("count"s));
+            to_assembly(runtime, set, locals, node.children[2]);
+            set.push_back(node.token, std::make_shared<opcodes::call_binary>("-"s, (short)6));
+            to_assembly(runtime, set, locals, node.children[1]);
+            set.push_back(node.token, std::make_shared<opcodes::call_binary>("-"s, (short)6));
+        }
+
+        // Make array out of them
+        set.push_back(node.token, std::make_shared<opcodes::make_array>(2));
+
+        // Emit "select" to perform the array index access
+        set.push_back(node.token, std::make_shared<opcodes::call_binary>("select"s, (short)4));
+    } break;
+    case ::sqf::sqc::bison::astkind::OP_RANGE_RINDEX_LENGTH: {
+        // Push actual array/string onto value stack
+        to_assembly(runtime, set, locals, node.children[0]);
+
+        // Push Index-Expression to stack
+        {
+            to_assembly(runtime, set, locals, node.children[0]);
+            set.push_back(node.token, std::make_shared<opcodes::call_unary>("count"s));
+            to_assembly(runtime, set, locals, node.children[1]);
+            set.push_back(node.token, std::make_shared<opcodes::call_binary>("-"s, (short)6));
+        }
+
+        // Push Length-Expression to stack
+        {
+            to_assembly(runtime, set, locals, node.children[2]);
+            to_assembly(runtime, set, locals, node.children[0]);
+            set.push_back(node.token, std::make_shared<opcodes::call_unary>("count"s));
+            to_assembly(runtime, set, locals, node.children[1]);
+            set.push_back(node.token, std::make_shared<opcodes::call_binary>("-"s, (short)6));
+            set.push_back(node.token, std::make_shared<opcodes::call_binary>("-"s, (short)6));
+        }
+
+        // Make array out of them
+        set.push_back(node.token, std::make_shared<opcodes::make_array>(2));
+
+        // Emit "select" to perform the array index access
+        set.push_back(node.token, std::make_shared<opcodes::call_binary>("select"s, (short)4));
+    } break;
+    case ::sqf::sqc::bison::astkind::OP_RANGE_RINDEX: {
+        // Push actual array/string onto value stack
+        to_assembly(runtime, set, locals, node.children[0]);
+
+        // Push Reversed-Index-Expression to stack
+        {
+            to_assembly(runtime, set, locals, node.children[0]);
+            set.push_back(node.token, std::make_shared<opcodes::call_unary>("count"s));
+            to_assembly(runtime, set, locals, node.children[1]);
+            set.push_back(node.token, std::make_shared<opcodes::call_binary>("-"s, (short)6));
+        }
+
+        // Make array out of it
+        set.push_back(node.token, std::make_shared<opcodes::make_array>(1));
+
+        // Emit "select" to perform the array index access
+        set.push_back(node.token, std::make_shared<opcodes::call_binary>("select"s, (short)4));
+    } break;
+    case ::sqf::sqc::bison::astkind::OP_RANGE_RINDEX_RLENGTH: {
+        // Push actual array/string onto value stack
+        to_assembly(runtime, set, locals, node.children[0]);
+
+        // Push Index-Expression to stack
+        {
+            to_assembly(runtime, set, locals, node.children[0]);
+            set.push_back(node.token, std::make_shared<opcodes::call_unary>("count"s));
+            to_assembly(runtime, set, locals, node.children[1]);
+            set.push_back(node.token, std::make_shared<opcodes::call_binary>("-"s, (short)6));
+        }
+
+        // Push Length-Expression to stack
+        {
+            to_assembly(runtime, set, locals, node.children[0]);
+            set.push_back(node.token, std::make_shared<opcodes::call_unary>("count"s));
+            to_assembly(runtime, set, locals, node.children[2]);
+            set.push_back(node.token, std::make_shared<opcodes::call_binary>("-"s, (short)6));
+            to_assembly(runtime, set, locals, node.children[0]);
+            set.push_back(node.token, std::make_shared<opcodes::call_unary>("count"s));
+            to_assembly(runtime, set, locals, node.children[1]);
+            set.push_back(node.token, std::make_shared<opcodes::call_binary>("-"s, (short)6));
+            set.push_back(node.token, std::make_shared<opcodes::call_binary>("-"s, (short)6));
+        }
+
+        // Make array out of them
+        set.push_back(node.token, std::make_shared<opcodes::make_array>(2));
+
+        // Emit "select" to perform the array index access
+        set.push_back(node.token, std::make_shared<opcodes::call_binary>("select"s, (short)4));
+    } break;
+    case ::sqf::sqc::bison::astkind::OP_RANGE_RLENGTH: {
+        // Push actual array/string onto value stack
+        to_assembly(runtime, set, locals, node.children[0]);
+
+        // Push Index-Expression to stack
+        set.push_back(node.children[1].token, std::make_shared<opcodes::push>(std::make_shared<::sqf::types::d_scalar>(0)));
+
+        // Push Length-Expression to stack
+        {
+            to_assembly(runtime, set, locals, node.children[0]);
+            set.push_back(node.token, std::make_shared<opcodes::call_unary>("count"s));
+            to_assembly(runtime, set, locals, node.children[1]);
+            set.push_back(node.token, std::make_shared<opcodes::call_binary>("-"s, (short)6));
+        }
+
+        // Make array out of them
+        set.push_back(node.token, std::make_shared<opcodes::make_array>(2));
+
+        // Emit "select" to perform the array index access
+        set.push_back(node.token, std::make_shared<opcodes::call_binary>("select"s, (short)4));
     } break;
     case ::sqf::sqc::bison::astkind::DECLARATION: {
         // Push assigned value
@@ -515,7 +713,12 @@ void sqf::sqc::parser::to_assembly(::sqf::runtime::runtime& runtime, util::setbu
 
         // Push instructions as string
         auto code = std::make_shared<::sqf::types::d_code>(runtime::instruction_set{ local_set });
-        set.push_back(node.children[0].token, std::make_shared<opcodes::push>(code->to_string_sqf()));
+        auto sqf = code->to_string_sqf();
+        if (sqf.length() >= 2)
+        {
+            sqf = sqf.substr(1, sqf.length() - 2);
+        }
+        set.push_back(node.children[0].token, std::make_shared<opcodes::push>(sqf));
 
         // Emit "compileFinal"
         set.push_back(node.token, std::make_shared<opcodes::call_unary>("compilefinal"));
@@ -654,6 +857,7 @@ void sqf::sqc::parser::to_assembly(::sqf::runtime::runtime& runtime, util::setbu
                     // Make array 
                     set.push_back(node.token, std::make_shared<opcodes::make_array>(3));
                 } break;
+                default: break;
                 }
             }
         }
@@ -686,9 +890,43 @@ void sqf::sqc::parser::to_assembly(::sqf::runtime::runtime& runtime, util::setbu
 
         auto local_set = set.create_from();
         to_assembly(runtime, local_set, locals, node.children[1]);
+
+        // Handle the case that the last instruction was `return` before pushing
+        bool should_exit_with = is_top_level;
+        if (should_exit_with && local_set.instructions().size() >= 2)
+        {
+            auto& instructions = local_set.instructions();
+            auto& back = instructions.back();
+            auto casted_binary = std::dynamic_pointer_cast<const ::sqf::opcodes::call_binary>(back);
+            if (casted_binary.get())
+            {
+                if (should_exit_with = casted_binary->operator_name() == "breakout"s)
+                {
+                    instructions.erase(instructions.end() - 2, instructions.end() - 2);
+                }
+            }
+            else
+            {
+                auto casted_unary = std::dynamic_pointer_cast<const ::sqf::opcodes::call_unary>(back);
+                if (casted_unary.get())
+                {
+                    if (should_exit_with = casted_unary->operator_name() == "breakout"s)
+                    {
+                        instructions.erase(instructions.end() - 2, instructions.end());
+                    }
+                }
+            }
+        }
         set.push_back(node.children[1].token, std::make_shared<opcodes::push>(runtime::instruction_set{ local_set }));
 
-        set.push_back(node.token, std::make_shared<opcodes::call_binary>("then"s, (short)4));
+        if (should_exit_with)
+        {
+            set.push_back(node.token, std::make_shared<opcodes::call_binary>("exitwith"s, (short)4));
+        }
+        else
+        {
+            set.push_back(node.token, std::make_shared<opcodes::call_binary>("then"s, (short)4));
+        }
     } break;
     case ::sqf::sqc::bison::astkind::OP_TERNARY: /* fallthrough */
     case ::sqf::sqc::bison::astkind::IFELSE: {
@@ -749,6 +987,7 @@ void sqf::sqc::parser::to_assembly(::sqf::runtime::runtime& runtime, util::setbu
         // Emit "for"
         std::string var(node.children[0].token.contents);
         std::string lvar = "_"s + var;
+        std::transform(var.begin(), var.end(), var.begin(), [](char c) { return (char)std::tolower(c); });
         set.push_back(node.children[0].token, std::make_shared<opcodes::push>(lvar));
         set.push_back(node.children[0].token, std::make_shared<opcodes::call_unary>("for"s));
 
@@ -807,6 +1046,7 @@ void sqf::sqc::parser::to_assembly(::sqf::runtime::runtime& runtime, util::setbu
 
             // Assign variable for forEach _x
             std::string var(node.children[0].token.contents);
+            std::transform(var.begin(), var.end(), var.begin(), [](char c) -> char { return (char)std::tolower(c); });
             locals_copy.push_back({ var, "_x" });
 
             // Fill actual instruction_set
@@ -1011,8 +1251,7 @@ void sqf::sqc::parser::to_assembly(::sqf::runtime::runtime& runtime, util::setbu
         to_assembly(runtime, set, locals, node.children[1]);
 
         // Emit "!=="
-        set.push_back(node.token, std::make_shared<opcodes::call_binary>("isequalto"s, (short)4));
-        set.push_back(node.token, std::make_shared<opcodes::call_unary>("!"s));
+        set.push_back(node.token, std::make_shared<opcodes::call_binary>("isnotequalto"s, (short)4));
     } break;
     case ::sqf::sqc::bison::astkind::OP_NOTEQUAL: {
         // Emit Left-Argument
@@ -1095,6 +1334,15 @@ void sqf::sqc::parser::to_assembly(::sqf::runtime::runtime& runtime, util::setbu
         // Emit "/"
         set.push_back(node.token, std::make_shared<opcodes::call_binary>("/"s, (short)7));
     } break;
+    case ::sqf::sqc::bison::astkind::OP_CONFIGNAV: {
+        // Emit Left-Argument
+        to_assembly(runtime, set, locals, node.children[0]);
+        // Emit Right-Argument
+        to_assembly(runtime, set, locals, node.children[1]);
+
+        // Emit "/"
+        set.push_back(node.token, std::make_shared<opcodes::call_binary>(">>"s, (short)3));
+    } break;
     case ::sqf::sqc::bison::astkind::OP_REMAINDER: {
         // Emit Left-Argument
         to_assembly(runtime, set, locals, node.children[0]);
@@ -1112,11 +1360,11 @@ void sqf::sqc::parser::to_assembly(::sqf::runtime::runtime& runtime, util::setbu
         set.push_back(node.token, std::make_shared<opcodes::call_unary>("!"s));
     } break;
     case ::sqf::sqc::bison::astkind::OBJECT: {
-        for (auto child : node.children[0].children)
+        for (auto child : node.children)
         {
             to_assembly(runtime, set, locals, child);
         }
-        set.push_back(node.token, std::make_shared<opcodes::make_array>(node.children[0].children.size()));
+        set.push_back(node.token, std::make_shared<opcodes::make_array>(node.children.size()));
         set.push_back(node.token, std::make_shared<opcodes::call_unary>("createhashmapfromarray"s));
     } break;
     case ::sqf::sqc::bison::astkind::OBJECT_ITEM: {
@@ -1346,6 +1594,8 @@ void sqf::sqc::parser::to_assembly(::sqf::runtime::runtime& runtime, util::setbu
                 case tokenizer::etoken::t_formatted_string_final:
                     sstream << util::strip_formatted(child.token.contents);
                     break;
+                default:
+                    break;
                 }
             }
 
@@ -1432,8 +1682,11 @@ void sqf::sqc::parser::to_assembly(::sqf::runtime::runtime& runtime, util::setbu
                 set.push_back(node.children[0].token, std::make_shared<opcodes::assign_to>(tmp), icpp_pos);
             }
         }
-        // Emit the Get-Variable
-        to_assembly(runtime, set, locals, node.children[0]);
+        if (!set.has_parent(::sqf::sqc::bison::astkind::STATEMENTS, 2))
+        {
+            // Emit the Get-Variable
+            to_assembly(runtime, set, locals, node.children[0]);
+        }
     } break;
     case ::sqf::sqc::bison::astkind::STATEMENTS: {
         for (const auto& child : node.children)
@@ -1477,4 +1730,592 @@ std::optional<::sqf::runtime::instruction_set> sqf::sqc::parser::parse(::sqf::ru
     set.push_back({}, std::make_shared<opcodes::end_statement>());
     to_assembly(runtime, set, locals, res);
     return set;
+}
+
+
+enum class source_type
+{
+    NA,
+    ROOT,
+    ASSIGN,
+    OPERATOR,
+    CODE,
+    PARAMS,
+    PARAMS_ENTRY,
+    CALL,
+    CLAUSE,
+    EXITWITH,
+    FORMAT,
+    GET_TYPE,
+    SELECT
+};
+static void to_sqc_actual(std::stringstream& out_sstream, source_type type, ::sqf::runtime::instruction_set::iterator begin, ::sqf::runtime::instruction_set::iterator end, uint8_t tab)
+{
+    struct my_stack;
+    using func = std::function<void(my_stack& stack, std::stringstream& sstream, source_type type, uint8_t tab)>;
+    struct my_stack : public std::vector<func>
+    {
+        func pop()
+        {
+            if (!empty())
+            {
+                auto val = back();
+                pop_back();
+                return val;
+            }
+            else
+            {
+                return [](my_stack& stack, std::stringstream& sstream, source_type type, uint8_t tab) { };
+            }
+        }
+    };
+    my_stack stack;
+    using namespace std::string_literals;
+    using namespace std::string_view_literals;
+    bool starts_with_params = false;
+
+    // Iterate over instructions like this would be the VM
+    for (auto it = begin; it != end; it++)
+    {
+        std::shared_ptr<sqf::opcodes::assign_to> assign_to;
+        std::shared_ptr<sqf::opcodes::assign_to_local> assign_to_local;
+        std::shared_ptr<sqf::opcodes::call_binary> call_binary;
+        std::shared_ptr<sqf::opcodes::call_nular> call_nular;
+        std::shared_ptr<sqf::opcodes::call_unary> call_unary;
+        std::shared_ptr<sqf::opcodes::end_statement> end_statement;
+        std::shared_ptr<sqf::opcodes::get_variable> get_variable;
+        std::shared_ptr<sqf::opcodes::make_array> make_array;
+        std::shared_ptr<sqf::opcodes::push> push;
+        if ((assign_to = std::dynamic_pointer_cast<sqf::opcodes::assign_to>(*it)))
+        {
+            stack.push_back([assign_to](my_stack& stack, std::stringstream& sstream, source_type type, uint8_t tab) {
+                if (stack.size() >= 1)
+                {
+                    sstream << assign_to->variable_name() << " = "sv;
+                    stack.pop()(stack, sstream, source_type::ASSIGN, tab);
+                }
+            });
+        }
+        else if ((assign_to_local = std::dynamic_pointer_cast<sqf::opcodes::assign_to_local>(*it)))
+        {
+            stack.push_back([assign_to_local](my_stack& stack, std::stringstream& sstream, source_type type, uint8_t tab) {
+                if (stack.size() >= 1)
+                {
+                    sstream << "private "sv << assign_to_local->variable_name() << " = "sv;
+                    stack.pop()(stack, sstream, source_type::ASSIGN, tab);
+                }
+            });
+        }
+        else if ((call_binary = std::dynamic_pointer_cast<sqf::opcodes::call_binary>(*it)))
+        {
+            stack.push_back([call_binary](my_stack& stack, std::stringstream& sstream, source_type type, uint8_t tab) {
+                if (stack.size() >= 2)
+                {
+                    if (type == source_type::SELECT)
+                    {
+                        sstream << "(";
+                    }
+                    auto n = call_binary->operator_name();
+
+                    if (n == "call")
+                    {
+                        std::stringstream tmpsstream;
+                        auto rgen = stack.pop();
+                        rgen(stack, tmpsstream, source_type::CALL, tab);
+                        auto rstring = tmpsstream.str();
+                        tmpsstream.str("");
+
+                        auto lgen = stack.pop();
+                        lgen(stack, tmpsstream, source_type::CALL, tab);
+                        auto lstring = tmpsstream.str();
+                        sstream << rstring << "(" << lstring << ")";
+                    }
+                    else if (n == "select")
+                    {
+                        std::stringstream tmpsstream;
+                        auto rgen = stack.pop();
+                        rgen(stack, tmpsstream, source_type::SELECT, tab);
+                        auto rstring = tmpsstream.str();
+                        tmpsstream.str("");
+
+                        auto lgen = stack.pop();
+                        lgen(stack, tmpsstream, source_type::SELECT, tab);
+                        auto lstring = tmpsstream.str();
+                        sstream << lstring << "[" << rstring << "]";
+                    }
+                    else if (n == "then")
+                    {
+                        std::stringstream tmpsstream;
+                        auto rgen = stack.pop();
+                        rgen(stack, tmpsstream, source_type::CLAUSE, tab);
+                        auto rstring = tmpsstream.str();
+                        tmpsstream.str("");
+
+                        auto lgen = stack.pop();
+                        lgen(stack, tmpsstream, source_type::OPERATOR, tab);
+                        auto lstring = tmpsstream.str();
+                        sstream << lstring << rstring;
+                    }
+                    else if (n == "exitwith")
+                    {
+                        std::stringstream tmpsstream;
+                        auto rgen = stack.pop();
+                        rgen(stack, tmpsstream, source_type::EXITWITH, tab);
+                        auto rstring = tmpsstream.str();
+                        tmpsstream.str("");
+
+                        auto lgen = stack.pop();
+                        lgen(stack, tmpsstream, source_type::OPERATOR, tab);
+                        auto lstring = tmpsstream.str();
+                        sstream << lstring << rstring;
+                    }
+                    else if (n == "else")
+                    {
+                        std::stringstream tmpsstream;
+                        auto rgen = stack.pop();
+                        rgen(stack, tmpsstream, source_type::CLAUSE, tab);
+                        auto rstring = tmpsstream.str();
+                        tmpsstream.str("");
+
+                        auto lgen = stack.pop();
+                        lgen(stack, tmpsstream, source_type::CLAUSE, tab);
+                        auto lstring = tmpsstream.str();
+                        sstream << lstring << "\n"sv << std::string(tab * 4, ' ') << "else"sv << rstring;
+                    }
+                    else if (n == "mod")
+                    {
+                        std::stringstream tmpsstream;
+                        auto rgen = stack.pop();
+                        rgen(stack, tmpsstream, type, tab);
+                        auto rstring = tmpsstream.str();
+                        tmpsstream.str("");
+
+                        auto lgen = stack.pop();
+                        lgen(stack, tmpsstream, type, tab);
+                        auto lstring = tmpsstream.str();
+                        sstream << lstring << " % "sv << rstring;
+                    }
+                    else if (n == "isEqualTo")
+                    {
+                        std::stringstream tmpsstream;
+                        auto rgen = stack.pop();
+                        rgen(stack, tmpsstream, type, tab);
+                        auto rstring = tmpsstream.str();
+                        tmpsstream.str("");
+
+                        auto lgen = stack.pop();
+                        lgen(stack, tmpsstream, type, tab);
+                        auto lstring = tmpsstream.str();
+                        sstream << lstring << " === "sv << rstring;
+                    }
+                    else if (n == "isNotEqualTo")
+                    {
+                        std::stringstream tmpsstream;
+                        auto rgen = stack.pop();
+                        rgen(stack, tmpsstream, type, tab);
+                        auto rstring = tmpsstream.str();
+                        tmpsstream.str("");
+
+                        auto lgen = stack.pop();
+                        lgen(stack, tmpsstream, type, tab);
+                        auto lstring = tmpsstream.str();
+                        sstream << lstring << " !== "sv << rstring;
+                    }
+                    else if (n == "+" || n == "-" || n == "*" || n == "/"
+                        || n == "%" || n == "==" || n == ">=" || n == ">>" || n == "<="
+                        || n == "!=" || n == ">" || n == "<")
+                    {
+                        std::stringstream tmpsstream;
+                        auto rgen = stack.pop();
+                        rgen(stack, tmpsstream, type, tab);
+                        auto rstring = tmpsstream.str();
+                        tmpsstream.str("");
+
+                        auto lgen = stack.pop();
+                        lgen(stack, tmpsstream, type, tab);
+                        auto lstring = tmpsstream.str();
+                        sstream << lstring << " "sv << n << " "sv << rstring;
+                    }
+                    else
+                    {
+                        std::stringstream tmpsstream;
+                        auto rgen = stack.pop();
+                        rgen(stack, tmpsstream, source_type::CALL, tab);
+                        auto rstring = tmpsstream.str();
+                        tmpsstream.str("");
+
+                        auto lgen = stack.pop();
+                        lgen(stack, tmpsstream, source_type::CALL, tab);
+                        auto lstring = tmpsstream.str();
+                        sstream << lstring << "."sv << n << "(" << rstring << ")";
+                    }
+                    if (type == source_type::SELECT)
+                    {
+                        sstream << ")";
+                    }
+                }
+            });
+        }
+        else if ((call_nular = std::dynamic_pointer_cast<sqf::opcodes::call_nular>(*it)))
+        {
+            stack.push_back([call_nular](my_stack& stack, std::stringstream& sstream, source_type type, uint8_t tab) {
+                    sstream << call_nular->operator_name();
+            });
+        }
+        else if ((call_unary = std::dynamic_pointer_cast<sqf::opcodes::call_unary>(*it)))
+        {
+            if (call_unary->operator_name() == "params")
+            {
+                stack.push_back([&starts_with_params, call_unary](my_stack& stack, std::stringstream& sstream, source_type type, uint8_t tab) {
+                    if (stack.size() >= 1)
+                    {
+                        sstream << "("sv;
+                        stack.pop()(stack, sstream, source_type::PARAMS, tab);
+                        sstream << ")"sv;
+                        if (stack.size() == 0)
+                        {
+                            starts_with_params = true;
+                        }
+                    }
+                });
+            }
+            else
+            {
+                stack.push_back([call_unary](my_stack& stack, std::stringstream& sstream, source_type type, uint8_t tab) {
+                    if (stack.size() >= 1)
+                    {
+                        auto n = call_unary->operator_name();
+                        if (n == "format")
+                        {
+                            stack.pop()(stack, sstream, source_type::FORMAT, tab);
+                        }
+                        else if (n == "!" || n == "+" || n == "-")
+                        {
+                            sstream << call_unary->operator_name();
+                            stack.pop()(stack, sstream, source_type::OPERATOR, tab);
+                        }
+                        else
+                        {
+                            sstream << call_unary->operator_name() << "("sv;
+                            stack.pop()(stack, sstream, source_type::CALL, tab);
+                            sstream << ")"sv;
+                        }
+                    }
+                });
+            }
+        }
+        else if ((end_statement = std::dynamic_pointer_cast<sqf::opcodes::end_statement>(*it)))
+        {
+        }
+        else if ((get_variable = std::dynamic_pointer_cast<sqf::opcodes::get_variable>(*it)))
+        {
+            stack.push_back([get_variable](my_stack& stack, std::stringstream& sstream, source_type type, uint8_t tab) {
+                    sstream << get_variable->variable_name();
+            });
+        }
+        else if ((make_array = std::dynamic_pointer_cast<sqf::opcodes::make_array>(*it)))
+        {
+            stack.push_back([make_array](my_stack& stack, std::stringstream& sstream, source_type type, uint8_t tab) {
+                switch (type)
+                {
+                    case source_type::SELECT:
+                    {
+                        std::vector<std::string> strings;
+                        std::stringstream tmpsstream;
+                        for (size_t i = 0; i < make_array->array_size() && !stack.empty(); i++)
+                        {
+                            stack.pop()(stack, tmpsstream, source_type::NA, tab);
+                            strings.push_back(tmpsstream.str());
+                            tmpsstream.str("");
+                        }
+                        if (strings.empty()) { break; }
+                        std::reverse(strings.begin(), strings.end());
+
+                        if (strings.size() >= 1) { sstream << strings[0]; }
+                        sstream << "..";
+                        if (strings.size() >= 2) { sstream << strings[1]; }
+                    }
+                    break;
+                    case source_type::FORMAT:
+                    {
+                        std::vector<std::string> strings;
+                        std::stringstream tmpsstream;
+                        for (size_t i = 0; i < make_array->array_size() && !stack.empty(); i++)
+                        {
+                            stack.pop()(stack, tmpsstream, source_type::NA, tab);
+                            strings.push_back(tmpsstream.str());
+                            tmpsstream.str("");
+                        }
+                        if (strings.empty()) { break; }
+                        std::reverse(strings.begin(), strings.end());
+                        auto str = strings[0];
+                        bool was_percent = false;
+                        size_t index = 0;
+
+                        sstream << "$";
+                        for (auto c : str)
+                        {
+                            if (was_percent)
+                            {
+                                switch (c)
+                                {
+                                    case '0': index *= 10; index += 0; break;
+                                    case '1': index *= 10; index += 1; break;
+                                    case '2': index *= 10; index += 2; break;
+                                    case '3': index *= 10; index += 3; break;
+                                    case '4': index *= 10; index += 4; break;
+                                    case '5': index *= 10; index += 5; break;
+                                    case '6': index *= 10; index += 6; break;
+                                    case '7': index *= 10; index += 7; break;
+                                    case '8': index *= 10; index += 8; break;
+                                    case '9': index *= 10; index += 9; break;
+                                    default:
+                                    if (index != 0 && index < strings.size())
+                                    {
+                                        sstream << "{" << strings[index] << "}";
+                                    }
+                                    if (c == '%')
+                                    {
+                                        index = 0;
+                                    }
+                                    else
+                                    {
+                                        sstream << c;
+                                        was_percent = false;
+                                    }
+                                    break;
+                                }
+                            }
+                            else if (c == '%')
+                            {
+                                was_percent = true;
+                                index = 0;
+                            }
+                            else if (c == '{' || c == '}')
+                            {
+                                sstream << c << c;
+                            }
+                            else
+                            {
+                                sstream << c;
+                            }
+                        }
+                    } break;
+                    case source_type::CALL:
+                    {
+                        std::vector<std::string> strings;
+                        std::stringstream tmpsstream;
+                        for (size_t i = 0; i < make_array->array_size() && !stack.empty(); i++)
+                        {
+                            stack.pop()(stack, tmpsstream, source_type::NA, tab);
+                            strings.push_back(tmpsstream.str());
+                            tmpsstream.str("");
+                        }
+                        if (strings.size() <= 1)
+                        {
+                            sstream << "[";
+                        }
+                        for (auto rit = strings.rbegin(); rit != strings.rend(); rit++)
+                        {
+                            if (rit != strings.rbegin()) { sstream << ", "; }
+                            sstream << *rit;
+                        }
+                        if (strings.size() <= 1)
+                        {
+                            sstream << "]";
+                        }
+                    } break;
+                    case source_type::PARAMS:
+                    {
+                        std::vector<std::string> strings;
+                        std::stringstream tmpsstream;
+                        for (size_t i = 0; i < make_array->array_size() && !stack.empty(); i++)
+                        {
+                            stack.pop()(stack, tmpsstream, source_type::PARAMS_ENTRY, tab);
+                            strings.push_back(tmpsstream.str());
+                            tmpsstream.str("");
+                        }
+                        for (auto rit = strings.rbegin(); rit != strings.rend(); rit++)
+                        {
+                            if (rit != strings.rbegin()) { sstream << ", "; }
+                            sstream << *rit;
+                        }
+                    } break;
+                    case source_type::PARAMS_ENTRY:
+                    {
+                        std::vector<func> gens;
+                        for (size_t i = 0; i < make_array->array_size() && !stack.empty(); i++)
+                        {
+                            gens.push_back(stack.pop());
+                        }
+                        std::reverse(gens.begin(), gens.end());
+                        if (gens.size() >= 3)
+                        {
+                            gens[2](stack, sstream, source_type::GET_TYPE, tab);
+                            sstream << " ";
+                        }
+                        if (gens.size() >= 1)
+                        {
+                            std::stringstream tmpsstream;
+                            gens[0](stack, tmpsstream, source_type::NA, tab);
+                            auto str = tmpsstream.str();
+                            sstream << sqf::runtime::util::trim(str, "\""sv);
+                        }
+                        if (gens.size() >= 2)
+                        {
+                            sstream << " = "sv;
+                            gens[1](stack, sstream, source_type::NA, tab);
+                        }
+                        for (size_t i = 3; i < gens.size(); i++)
+                        {
+                            std::stringstream tmpsstream;
+                            gens[i](stack, tmpsstream, source_type::NA, tab);
+                        }
+                    } break;
+                    default:
+                    {
+                        std::vector<std::string> strings;
+                        std::stringstream tmpsstream;
+                        for (size_t i = 0; i < make_array->array_size() && !stack.empty(); i++)
+                        {
+                            stack.pop()(stack, tmpsstream, source_type::NA, tab);
+                            strings.push_back(tmpsstream.str());
+                            tmpsstream.str("");
+                        }
+                        sstream << "[";
+                        // Read in vector reversed
+                        for (auto rit = strings.rbegin(); rit != strings.rend(); rit++)
+                        {
+                            if (rit != strings.rbegin()) { sstream << ", "; }
+                            sstream << *rit;
+                        }
+                        sstream << "]";
+                    } break;
+                }
+            });
+        }
+        else if ((push = std::dynamic_pointer_cast<sqf::opcodes::push>(*it)))
+        {
+            stack.push_back([push](my_stack& stack, std::stringstream& sstream, source_type type, uint8_t tab) {
+                if (type == source_type::GET_TYPE)
+                {
+                    auto sview = push->value().type().to_string();
+                    std::string str(sview.begin(), sview.end());
+                    std::transform(str.begin(), str.end(), str.begin(), [](char c) -> char { return (char)std::tolower(c); });
+                    sstream << str;
+                }
+                else if (push->value().type() == sqf::runtime::t_code())
+                {
+                    if (type == source_type::CLAUSE)
+                    {
+                        auto& lset = push->value().data<::sqf::types::d_code>()->value();
+                        sstream << "\n"sv << std::string(tab * 4, ' ') << "{"sv;
+                        to_sqc_actual(sstream, source_type::NA, lset.begin(), lset.end(), tab + 1);
+                        sstream << "\n"sv << std::string(tab * 4, ' ') << "}"sv;
+                    }
+                    else if (type == source_type::EXITWITH)
+                    {
+                        auto& lset = push->value().data<::sqf::types::d_code>()->value();
+                        if (lset.empty())
+                        {
+                            sstream << " { return; }"sv;
+                        }
+                        else
+                        {
+                            sstream << "\n"sv << std::string(tab * 4, ' ') << "{"sv;
+                            to_sqc_actual(sstream, source_type::NA, lset.begin(), lset.end(), tab + 1);
+                            sstream << "\n"sv << std::string((tab + 1) * 4, ' ') << "return;"sv; // just always insert empty return here
+                            sstream << "\n"sv << std::string(tab * 4, ' ') << "}"sv;
+                        }
+                    }
+                    else
+                    {
+                        auto& lset = push->value().data<::sqf::types::d_code>()->value();
+                        to_sqc_actual(sstream, source_type::CODE, lset.begin(), lset.end(), tab + 1);
+                    }
+                }
+                else
+                {
+                    sstream << push->value().data<::sqf::runtime::data>()->to_string_sqf();
+                }
+            });
+        }
+    }
+
+
+
+    // Write out every generator method on stack into vector
+    std::vector<std::string> strings;
+    std::stringstream sstream;
+    while (!stack.empty())
+    {
+        stack.pop()(stack, sstream, type, tab);
+        strings.push_back(sstream.str());
+        sstream.str("");
+    }
+
+    if (strings.size() == 0)
+    {
+        if (type == source_type::CODE)
+        {
+            out_sstream << "function() {}";
+        }
+    }
+    else
+    {
+        if (type == source_type::ROOT && starts_with_params)
+        {
+            out_sstream << "params";
+        }
+        bool skip_final_newline = false;
+        // Read in vector reversed
+        for (auto rit = strings.rbegin(); rit != strings.rend(); rit++)
+        {
+            if (type == source_type::CODE && rit == strings.rbegin())
+            {
+                out_sstream << "function"sv;
+                if (!starts_with_params)
+                {
+                    if (rit->length() < 32 && strings.size() == 1)
+                    {
+                        skip_final_newline = true;
+                        out_sstream << "() { "sv << *rit << ";"sv;
+                    }
+                    else
+                    {
+                        out_sstream << "() {\n"sv << std::string(tab * 4, ' ') << *rit << ";"sv;
+                    }
+                }
+                else
+                {
+                    out_sstream << std::string(tab * 4, ' ') << *rit << ") {"sv;
+                }
+            }
+            else
+            {
+                out_sstream << "\n"sv << std::string(tab * 4, ' ') << *rit << ";"sv;
+            }
+        }
+        if (type == source_type::CODE)
+        {
+            if (skip_final_newline)
+            {
+                out_sstream << " "sv;
+            }
+            else
+            {
+                out_sstream << "\n"sv << std::string((tab - 1) * 4, ' ');
+            }
+            out_sstream << "}"sv;
+        }
+    }
+}
+std::string sqf::sqc::parser::to_sqc(const::sqf::runtime::instruction_set& set)
+{
+    auto begin = set.begin();
+    auto end = set.end();
+    std::stringstream sstream;
+    to_sqc_actual(sstream, source_type::ROOT, begin, end, 0);
+    auto str = sstream.str();
+    return str;
 }

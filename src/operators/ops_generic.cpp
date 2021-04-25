@@ -12,6 +12,7 @@
 #include "../runtime/d_array.h"
 #include "../runtime/diagnostics/d_stacktrace.h"
 #include "../runtime/d_code.h"
+#include "d_text.h"
 #include "../runtime/git_sha1.h"
 
 #include "dlops_storage.h"
@@ -978,7 +979,7 @@ namespace
     }
     value hint_text(runtime& runtime, value::cref right)
     {
-        auto r = right.data<d_string, std::string>();
+        auto r = right.data<d_text, std::string>();
         runtime.__logmsg(err::InfoMessage(runtime.context_active().current_frame().diag_info_from_position(), "HINT"s, r));
         return {};
     }
@@ -1131,6 +1132,8 @@ namespace
     {
         auto context_weak = runtime.context_create();
         auto lock = context_weak.lock();
+        lock->can_suspend(true);
+        lock->weak_error_handling(true);
         auto scriptdata = std::make_shared<d_script>(context_weak);
         frame f(runtime.default_value_scope(), right.data<d_code, instruction_set>());
         f["_thisScript"] = scriptdata;
@@ -1246,7 +1249,7 @@ namespace
     {
         auto arr = left.data<d_array>();
         auto r = right.data<d_array>();
-        arr->insert(arr->begin(), r->begin(), r->end());
+        arr->insert(arr->end(), r->begin(), r->end());
         return {};
     }
     value arrayintersect_array_array(runtime& runtime, value::cref left, value::cref right)
@@ -1302,7 +1305,7 @@ namespace
     value selectmax_array(runtime& runtime, value::cref right)
     {
         auto r = right.data<d_array>();
-        double max = 0;
+        double max = std::numeric_limits<float>::lowest();
         for (size_t i = r->size() - 1; i != ~(size_t)0; i--)
         {
             auto tmp = r->at(i);
@@ -1334,7 +1337,7 @@ namespace
     value selectmin_array(runtime& runtime, value::cref right)
     {
         auto r = right.data<d_array>();
-        double min = 0;
+        double min = std::numeric_limits<float>::max();
         for (size_t i = r->size() - 1; i != ~(size_t)0; i--)
         {
             auto tmp = r->at(i);
@@ -1836,7 +1839,9 @@ namespace
             runtime.__logmsg(err::SuspensionInUnscheduledEnvironment(runtime.context_active().current_frame().diag_info_from_position()));
             return {};
         }
-        auto duration = std::chrono::duration<float>();
+
+        float f = right.data<d_scalar, float>();
+        auto duration = std::chrono::duration<float>(f);
         auto durationCasted = std::chrono::duration_cast<std::chrono::milliseconds>(duration);
 
         runtime.context_active().suspend(durationCasted);
@@ -2088,6 +2093,10 @@ namespace
     {
         return breakout_any_string(runtime, {}, right);
     }
+    value disableserialization(runtime& runtime)
+    {
+        return {};
+    }
 }
 void sqf::operators::ops_generic(sqf::runtime::runtime& runtime)
 {
@@ -2179,6 +2188,7 @@ void sqf::operators::ops_generic(sqf::runtime::runtime& runtime)
     runtime.register_sqfop(unary("param", t_array(), "Extracts a single value with given index from _this.", param_array));
     runtime.register_sqfop(binary(4, "param", t_any(), t_array(), "Extracts a single value with given index from input argument.", param_any_array));
     runtime.register_sqfop(unary("sleep", t_scalar(), "Suspends code execution for given time in seconds. The delay given is the minimal delay expected.", sleep_scalar));
+    runtime.register_sqfop(unary("uiSleep", t_scalar(), "Suspends code execution for given time in seconds. The delay given is the minimal delay expected.", sleep_scalar));
     runtime.register_sqfop(nular("canSuspend", "Returns true if sleep, uiSleep or waitUntil commands can be used in current scope.", cansuspend_));
     runtime.register_sqfop(unary("loadFile", t_string(), "", loadfile_string));
     runtime.register_sqfop(unary("preprocessFileLineNumbers", t_string(), "Reads and processes the content of the specified file. Preprocessor is C-like, supports comments using // or /* and */ and PreProcessor Commands.", preprocessfile_string));
@@ -2193,4 +2203,5 @@ void sqf::operators::ops_generic(sqf::runtime::runtime& runtime)
     runtime.register_sqfop(binary(4, "throw", t_if(), t_any(), "Throws an exception. The exception is processed by first catch block. This command will terminate further execution of the code.", throw_if_any));
     runtime.register_sqfop(unary("try", t_code(), "Defines a try-catch structure. This sets up an exception handling block.", try_code));
     runtime.register_sqfop(binary(4, "catch", t_exception(), t_code(), "Processes code when an exception is thrown in a try block. The exception caught can be found in the _exception variable.", catch_exception_code));
+    runtime.register_sqfop(nular("disableSerialization", "Disable saving of script containing this command.", disableserialization));
 }
